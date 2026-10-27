@@ -6,6 +6,7 @@
   import { api, errorText, type LocalStatus, type PullProgress, type Settings } from "./api";
   import { fileSize } from "./format";
   import { fadeOut, sheet } from "./motion";
+  import SharedMailboxes from "./SharedMailboxes.svelte";
   import { SOUND_OPTIONS, getSound, setSound, preview, type SoundKind } from "./sounds";
 
   let sounds = $state<Record<SoundKind, string>>({ mail: getSound("mail"), meeting: getSound("meeting") });
@@ -271,7 +272,7 @@
 
   <section>
     <h3>Account</h3>
-    {#each mail.accounts as a (a.id)}
+    {#each mail.accounts.filter((x) => !x.sharedOf) as a (a.id)}
       <button
         class="acc"
         onclick={() => {
@@ -283,6 +284,9 @@
         <span class="acc-text"><strong>{a.name}</strong><small>{a.email}</small></span>
         <Icon name="chevron" size={14} />
       </button>
+      {#if a.auth === "oauth-microsoft"}
+        <SharedMailboxes owner={a} />
+      {/if}
     {/each}
     <button
       class="btn btn-line"

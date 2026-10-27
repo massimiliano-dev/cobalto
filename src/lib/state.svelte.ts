@@ -611,9 +611,17 @@ class MailState {
     this.toast(`${acc.email} è pronto`);
   }
 
+  /** Casella condivisa attivata dalle impostazioni: compare subito nel selettore. */
+  async sharedAdded(acc: Account) {
+    this.accounts = await api.accounts();
+    this.loadFolders(acc.id);
+    this.toast(`${acc.email} è ora visibile in Cobalto`);
+  }
+
   async removeAccount(id: string) {
     await api.removeAccount(id);
-    this.accounts = this.accounts.filter((a) => a.id !== id);
+    // Con l'account se ne vanno anche le sue caselle condivise
+    this.accounts = this.accounts.filter((a) => a.id !== id && a.sharedOf !== id);
     delete this.folders[id];
     if (this.accountId === id) {
       this.accountId = null;

@@ -28,6 +28,7 @@ Requisiti: Rust ≥ 1.88 e Node ≥ 20. Su Linux servono anche i [prerequisiti T
   - Claude (Anthropic), GPT (OpenAI o compatibili) oppure **AI locale con Ollama**: gratis, i testi non lasciano il Mac
 - **Assistente** (`⌘J`): chat sulla cartella aperta e sull'email che stai leggendo. Cita le email con numeri cliccabili e trasforma le risposte in bozze.
 - **Calendario multi-account** (`⌘2`): settimana e agenda con gli eventi di tutti gli account Microsoft e Google, ognuno nella sua sfumatura di blu. Riconosce le chiamate Teams, Meet, Zoom e Webex con il pulsante **Partecipa**. Mostra "Tra 5 minuti…" nella sidebar e invia una notifica. L'assistente vede anche gli appuntamenti.
+- **Caselle condivise** (Microsoft 365): in Impostazioni, sotto l'account, "Cerca" trova le caselle condivise a cui hai accesso e un interruttore le mostra in Cobalto, con il tuo stesso accesso. Si possono aggiungere anche per indirizzo. L'invio "come" la casella richiede il permesso Invia come.
 - **Notifiche** di nuova posta su tutti gli account e numero dei non letti sull'icona.
 - **Inoltro** con gli allegati originali.
 - **Tastiera**: `J`/`K`, `R`, `A`, `F`, `E`, `#`, `S`, `U`, `C`, `/`, `⌘K` (palette dei comandi), `⌘↵` (invia).
@@ -46,7 +47,7 @@ Microsoft ha disattivato l'accesso IMAP/SMTP con password sia per gli account pe
 3. I permessi `IMAP.AccessAsUser.All` e `SMTP.Send` vengono chiesti al primo accesso. Se nel tenant gli utenti non possono dare consenso alle app, un amministratore deve approvare Cobalto (Entra ID → Applicazioni aziendali → Cobalto → Autorizzazioni → *Concedi consenso amministratore*).
 4. Sulla casella devono essere attivi **IMAP** e **SMTP autenticato**: Exchange admin center → Destinatari → Cassette postali → *utente* → **Gestisci le app di posta elettronica**. Se lo SMTP autenticato è disattivato a livello di organizzazione: `Set-TransportConfig -SmtpClientAuthenticationDisabled $false`.
 
-Permessi delegati usati (Microsoft Graph): IMAP.AccessAsUser.All, SMTP.Send, Mail.Send, Files.ReadWrite, Calendars.Read, offline_access, User.Read.
+Permessi delegati usati (Microsoft Graph): IMAP.AccessAsUser.All, SMTP.Send, Mail.Send, Files.ReadWrite, Calendars.Read, Mail.Read.Shared, Mail.Send.Shared, User.Read.All (per trovare le caselle condivise), offline_access, User.Read.
 
 ### Google
 

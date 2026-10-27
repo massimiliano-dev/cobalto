@@ -329,6 +329,7 @@ pub async fn authorize(
         smtp_security: p.smtp_security.into(),
         signature: String::new(),
         auth: format!("oauth-{}", p.id),
+        shared_of: None,
     };
     let access_token = store_tokens(&account.id, &v, None)?;
     Ok(Authorized { account, access_token })
@@ -338,6 +339,11 @@ pub async fn authorize(
 static REFRESH: Mutex<()> = Mutex::const_new(());
 
 /// Access token valido per l'account, rinnovato se in scadenza.
+/// Di chi sono i token: le caselle condivise usano quelli dell'account principale.
+fn token_owner(acc: &Account) -> &str {
+    acc.shared_of.as_deref().unwrap_or(&acc.id)
+}
+
 pub async fn access_token(acc: &Account) -> Result<String> {
     let provider_id = acc
         .auth
@@ -345,7 +351,7 @@ pub async fn access_token(acc: &Account) -> Result<String> {
         .ok_or_else(|| AppError::msg("L'account non usa OAuth"))?;
     let p = provider(provider_id)?;
     let _guard = REFRESH.lock().await;
-    let raw = store::get_secret(&secret_key(&acc.id))
+    let raw = store::get_secret(&secret_key(token_owner(acc)))
         .map_err(|_| AppError::msg("Accesso scaduto: ricollega l'account"))?;
     let tokens: Tokens = serde_json::from_str(&raw)?;
     if tokens.expires_at > now() + 120 {
@@ -361,7 +367,7 @@ pub async fn access_token(acc: &Account) -> Result<String> {
     )
     .await
     .map_err(|e| AppError::msg(format!("{e} — ricollega l'account dalle Impostazioni")))?;
-    store_tokens(&acc.id, &v, Some(&tokens.refresh_token))
+    store_tokens(token_owner(acc), &v, Some(&tokens.refresh_token))
 }
 
 // Invio (Mail.Send) e allegati grandi su OneDrive (Files.ReadWrite)
@@ -373,32 +379,51 @@ struct CachedToken {
     expires_at: u64,
 }
 
-fn graph_key(account_id: &str) -> String {
-    format!("oauth-graph-v3:{account_id}")
+// Ambiti Graph per caselle condivise (invio "come" la casella) e per trovarle nella directory
+const SHARED_GRAPH_SCOPE: &str = "https://graph.microsoft.com/Mail.Send.Shared https://graph.microsoft.com/Files.ReadWrite offline_access";
+const DIRECTORY_SCOPE: &str = "https://graph.microsoft.com/User.Read.All https://graph.microsoft.com/Mail.Read.Shared offline_access";
+
+fn graph_key(tag: &str, account_id: &str) -> String {
+    format!("oauth-graph-{tag}:{account_id}")
 }
 
-/// Token per Microsoft Graph (invio con Mail.Send), ottenuto dallo stesso refresh token:
+/// Token per Microsoft Graph (invio, OneDrive, calendario), ottenuto dallo stesso refresh token:
 /// così si può inviare anche dove l'SMTP autenticato è disattivato.
 pub async fn graph_send_token(acc: &Account) -> Result<String> {
+    if acc.shared_of.is_some() {
+        graph_token(acc, SHARED_GRAPH_SCOPE, "shared").await
+    } else {
+        graph_token(acc, GRAPH_SCOPE, "v3").await
+    }
+}
+
+/// Token per cercare le caselle condivise a cui l'utente ha accesso.
+pub async fn directory_token(acc: &Account) -> Result<String> {
+    graph_token(acc, DIRECTORY_SCOPE, "dir").await
+}
+
+async fn graph_token(acc: &Account, scope: &str, tag: &str) -> Result<String> {
     if acc.auth != "oauth-microsoft" {
         return Err(AppError::msg("Graph è disponibile solo per gli account Microsoft"));
     }
     let _guard = REFRESH.lock().await;
-    if let Some(cached) = store::get_secret(&graph_key(&acc.id))
+    let cache = graph_key(tag, &acc.id);
+    if let Some(cached) = store::get_secret(&cache)
         .ok()
         .and_then(|raw| serde_json::from_str::<CachedToken>(&raw).ok())
         .filter(|t| t.expires_at > now() + 120)
     {
         return Ok(cached.access_token);
     }
-    let raw = store::get_secret(&secret_key(&acc.id))?;
+    let owner = token_owner(acc);
+    let raw = store::get_secret(&secret_key(owner))?;
     let mut tokens: Tokens = serde_json::from_str(&raw)?;
     let v = token_request(
         &MICROSOFT,
         &[
             ("grant_type", "refresh_token"),
             ("refresh_token", &tokens.refresh_token),
-            ("scope", GRAPH_SCOPE),
+            ("scope", scope),
         ],
     )
     .await?;
@@ -409,19 +434,21 @@ pub async fn graph_send_token(acc: &Account) -> Result<String> {
     // Microsoft ruota il refresh token: quello nuovo vale per tutte le risorse
     if let Some(r) = v["refresh_token"].as_str() {
         tokens.refresh_token = r.to_string();
-        store::set_secret(&secret_key(&acc.id), &serde_json::to_string(&tokens)?)?;
+        store::set_secret(&secret_key(owner), &serde_json::to_string(&tokens)?)?;
     }
     let cached = CachedToken {
         access_token: access.clone(),
         expires_at: now() + v["expires_in"].as_u64().unwrap_or(3600),
     };
-    store::set_secret(&graph_key(&acc.id), &serde_json::to_string(&cached)?)?;
+    store::set_secret(&cache, &serde_json::to_string(&cached)?)?;
     Ok(access)
 }
 
 pub fn forget(account_id: &str) {
     let _ = store::delete_secret(&secret_key(account_id));
-    let _ = store::delete_secret(&graph_key(account_id));
+    for tag in ["v3", "shared", "dir"] {
+        let _ = store::delete_secret(&graph_key(tag, account_id));
+    }
     for old in ["oauth-graph", "oauth-graph-v2"] {
         let _ = store::delete_secret(&format!("{old}:{account_id}"));
     }

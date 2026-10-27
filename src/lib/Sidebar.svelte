@@ -9,6 +9,10 @@
   let system = $derived(mail.currentFolders.filter((f) => f.role));
   let custom = $derived(mail.currentFolders.filter((f) => !f.role));
   let accountsOpen = $state(false);
+  // Ogni account seguito dalle sue caselle condivise
+  let ordered = $derived(
+    mail.accounts.filter((a) => !a.sharedOf).flatMap((a) => [a, ...mail.accounts.filter((x) => x.sharedOf === a.id)]),
+  );
   // Gli altri account hanno posta nuova? Il badge mostra solo quello aperto, qui si vede il resto
   let othersUnread = $derived(mail.accounts.some((a) => a.id !== mail.accountId && mail.unreadFor(a.id) > 0));
   let nav: HTMLElement | undefined = $state();
@@ -49,16 +53,17 @@
           {#if othersUnread}<span class="others" title="Posta nuova in un altro account"></span>{/if}
         </span>
         <span class="who">
-          <strong>{mail.account.name || mail.account.email}</strong>
+          <strong>{mail.account.name || mail.account.email}{#if mail.account.sharedOf}<em class="shared-tag">condivisa</em>{/if}</strong>
           <small>{mail.account.email}</small>
         </span>
         <span class="caret" class:open={accountsOpen}><Icon name="down" size={14} /></span>
       </button>
       {#if accountsOpen}
         <div class="account-menu">
-          {#each mail.accounts as a (a.id)}
+          {#each ordered as a (a.id)}
             <button
               class="account-row"
+              class:shared={!!a.sharedOf}
               class:active={a.id === mail.accountId}
               onclick={() => {
                 mail.selectAccount(a.id);
@@ -66,7 +71,7 @@
               }}
             >
               <span class="avatar sm">{initials({ name: a.name, email: a.email })}</span>
-              <span class="row-email">{a.email}</span>
+              <span class="row-email">{a.email}{#if a.sharedOf}<em>condivisa</em>{/if}</span>
               {#if mail.unreadFor(a.id) > 0}<span class="row-count">{mail.unreadFor(a.id)}</span>{/if}
               {#if a.id === mail.accountId}<Icon name="check" size={14} />{/if}
             </button>
@@ -280,6 +285,16 @@
     box-shadow: 0 0 0 2px var(--cobalt-deep);
     animation: stamp 0.32s var(--ease-ink);
   }
+  .account-row.shared {
+    padding-left: 20px;
+  }
+  .row-email em {
+    margin-left: 6px;
+    font-style: normal;
+    font-size: 0.66rem;
+    font-weight: 650;
+    color: var(--on-deep-3);
+  }
   .row-count {
     font-size: var(--t-xs);
     font-weight: 700;
@@ -301,6 +316,13 @@
     flex: 1;
   }
   .who strong,
+  .shared-tag {
+    margin-left: 6px;
+    font-style: normal;
+    font-size: 0.66rem;
+    font-weight: 650;
+    color: var(--on-deep-3);
+  }
   .who small {
     overflow: hidden;
     text-overflow: ellipsis;

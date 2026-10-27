@@ -24,6 +24,9 @@ pub struct Account {
     /// "password" oppure "oauth-microsoft" / "oauth-google"
     #[serde(default = "default_auth")]
     pub auth: String,
+    /// Casella condivisa: id dell'account con cui si accede (se ne usano i token)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_of: Option<String>,
 }
 
 fn default_auth() -> String {
@@ -113,7 +116,12 @@ impl Store {
     }
 
     pub fn remove_account(&self, id: &str) -> Result<()> {
-        let all: Vec<Account> = self.accounts().into_iter().filter(|a| a.id != id).collect();
+        // Con un account se ne vanno anche le sue caselle condivise
+        let all: Vec<Account> = self
+            .accounts()
+            .into_iter()
+            .filter(|a| a.id != id && a.shared_of.as_deref() != Some(id))
+            .collect();
         let _ = delete_secret(&format!("account:{id}"));
         crate::oauth::forget(id);
         let _ = std::fs::remove_dir_all(self.cache_dir.join(id));

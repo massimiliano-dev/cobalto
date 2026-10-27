@@ -12,6 +12,8 @@ export interface Account {
   smtpSecurity: "ssl" | "starttls";
   signature: string;
   auth?: "password" | "oauth-microsoft" | "oauth-google";
+  /** Casella condivisa: id dell'account con cui la si apre */
+  sharedOf?: string;
 }
 
 export interface Addr {
@@ -171,6 +173,9 @@ export const api = {
   oauthAvailable: () => invoke<OAuthProvider[]>("oauth_available"),
   oauthConnect: (provider: OAuthProvider) => invoke<Account>("oauth_connect", { provider }),
   oauthCancel: () => invoke<void>("oauth_cancel"),
+  sharedMailboxes: (accountId: string) =>
+    invoke<{ email: string; name: string; unread: number }[]>("shared_mailboxes", { accountId }),
+  sharedAdd: (accountId: string, email: string, name: string) => invoke<Account>("shared_add", { accountId, email, name }),
   calendar: (start: number, end: number) => invoke<CalendarResult>("calendar_events", { start, end }),
   inboxCheck: (accountId: string, afterUid: number | null) =>
     invoke<InboxCheck>("inbox_check", { accountId, afterUid }),

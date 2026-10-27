@@ -282,6 +282,9 @@ async fn google(acc: &Account, token: &str, start: i64, end: i64) -> Result<Vec<
 
 /// Eventi di un account nell'intervallo; gli account senza OAuth non hanno un calendario leggibile.
 pub async fn events(acc: &Account, start: i64, end: i64) -> Result<Vec<CalEvent>> {
+    if acc.shared_of.is_some() {
+        return Err(AppError::msg("unsupported"));
+    }
     match acc.auth.as_str() {
         "oauth-microsoft" => {
             let token = crate::oauth::graph_send_token(acc).await.map_err(|_| {

@@ -3,6 +3,7 @@ mod calendar;
 mod error;
 mod imap;
 mod oauth;
+mod shared;
 mod onedrive;
 mod smtp;
 mod store;
@@ -148,6 +149,40 @@ async fn oauth_connect(handle: AppHandle, app: State<'_, App>, provider: String)
         return Err(e);
     }
     app.pool.drop_account(&account.id).await;
+    app.store.save_account(account.clone())?;
+    Ok(account)
+}
+
+/// Caselle condivise a cui l'account Microsoft ha accesso.
+#[tauri::command]
+async fn shared_mailboxes(app: State<'_, App>, account_id: String) -> Result<Vec<shared::SharedMailbox>> {
+    let owner = app.store.account(&account_id)?;
+    if owner.auth != "oauth-microsoft" || owner.shared_of.is_some() {
+        return Err(AppError::msg("Le caselle condivise sono disponibili per gli account Microsoft 365"));
+    }
+    let token = oauth::directory_token(&owner)
+        .await
+        .map_err(|_| AppError::msg("Ricollega l'account Microsoft per cercare le caselle condivise"))?;
+    shared::discover(&owner, &token).await
+}
+
+/// Attiva una casella condivisa: prova ad aprirla via IMAP e la salva come account.
+#[tauri::command]
+async fn shared_add(app: State<'_, App>, account_id: String, email: String, name: String) -> Result<Account> {
+    let owner = app.store.account(&account_id)?;
+    let email = email.trim().to_lowercase();
+    if !email.contains('@') {
+        return Err(AppError::msg("Indirizzo non valido"));
+    }
+    if let Some(existing) = app.store.accounts().into_iter().find(|a| a.email.eq_ignore_ascii_case(&email)) {
+        return Ok(existing);
+    }
+    let account = shared::child(&owner, &email, name.trim());
+    let cred = imap::credential(&account).await?;
+    let mut session = imap::connect(&account, &cred).await.map_err(|_| {
+        AppError::msg(format!("Non hai accesso a {email}: serve il permesso «Accesso completo» sulla casella"))
+    })?;
+    let _ = session.logout().await;
     app.store.save_account(account.clone())?;
     Ok(account)
 }
@@ -301,7 +336,7 @@ async fn mail_send(app: State<'_, App>, account_id: String, mut draft: smtp::Dra
                 share_large_attachments(&acc, &token, &mut draft, raw.len()).await?;
             }
             let (_, raw) = smtp::build(&acc, &draft, true)?;
-            return smtp::graph_send(&token, &raw).await;
+            return smtp::graph_send(&token, &raw, acc.shared_of.as_ref().map(|_| acc.email.as_str())).await;
         }
     }
     let cred = imap::credential(&acc).await?;
@@ -512,6 +547,8 @@ pub fn run() {
             oauth_available,
             oauth_connect,
             oauth_cancel,
+            shared_mailboxes,
+            shared_add,
             inbox_check,
             calendar_events,
             folders_list,

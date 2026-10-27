@@ -126,14 +126,19 @@ pub const LINKS_TEXT_MARK: &str = "{{cobalto-links}}";
 
 /// Invio tramite Microsoft Graph con il messaggio MIME già pronto.
 /// Graph salva da sé la copia in "Posta inviata".
-pub async fn graph_send(token: &str, raw: &[u8]) -> Result<()> {
+/// `mailbox`: per le caselle condivise si invia da /users/{casella}, non da /me.
+pub async fn graph_send(token: &str, raw: &[u8], mailbox: Option<&str>) -> Result<()> {
     if raw.len() > GRAPH_MAX_MIME {
         return Err(AppError::msg(
             "Messaggio troppo grande per l'invio tramite Microsoft 365 (massimo circa 3 MB di allegati)",
         ));
     }
+    let url = match mailbox {
+        Some(m) => format!("https://graph.microsoft.com/v1.0/users/{m}/sendMail"),
+        None => "https://graph.microsoft.com/v1.0/me/sendMail".to_string(),
+    };
     let resp = reqwest::Client::new()
-        .post("https://graph.microsoft.com/v1.0/me/sendMail")
+        .post(url)
         .bearer_auth(token)
         .header("Content-Type", "text/plain")
         .body(base64::engine::general_purpose::STANDARD.encode(raw))
@@ -145,6 +150,11 @@ pub async fn graph_send(token: &str, raw: &[u8]) -> Result<()> {
     let status = resp.status();
     let v: serde_json::Value = resp.json().await.unwrap_or_default();
     let msg = v["error"]["message"].as_str().unwrap_or("errore sconosciuto");
+    if mailbox.is_some() && (v.to_string().contains("SendAs") || status.as_u16() == 403) {
+        return Err(AppError::msg(
+            "Non hai il permesso «Invia come» per questa casella condivisa: va concesso dall'amministratore di Microsoft 365",
+        ));
+    }
     Err(AppError::msg(format!("Microsoft 365 ha rifiutato l'invio ({status}): {msg}")))
 }
 

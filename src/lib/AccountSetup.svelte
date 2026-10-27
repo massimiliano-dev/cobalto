@@ -42,8 +42,9 @@
   let isOauthAccount = $derived(!!editing?.auth?.startsWith("oauth-"));
   // Microsoft accetta solo OAuth: niente campi password
   let passwordForm = $derived(!isOauthAccount && !provider?.oauthOnly);
+  // Una casella condivisa usa l'accesso del suo account principale: niente "Ricollega" qui
   let oauthTarget = $derived<OAuthProvider | undefined>(
-    isOauthAccount ? (editing!.auth!.slice(6) as OAuthProvider) : provider?.oauth,
+    isOauthAccount ? (editing!.sharedOf ? undefined : (editing!.auth!.slice(6) as OAuthProvider)) : provider?.oauth,
   );
   const oauthLabel: Record<OAuthProvider, string> = { microsoft: "Microsoft", google: "Google" };
 

@@ -178,6 +178,7 @@ function stream(id: string, text: string) {
   setTimeout(() => emit("ai-done", { id, error: null }), 300 + parts.length * 22 + 50);
 }
 
+let sharedAccounts: any[] = [];
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function installPreview() {
@@ -187,7 +188,7 @@ export function installPreview() {
       const a = (args ?? {}) as Record<string, any>;
       switch (cmd) {
         case "accounts_list":
-          return [account, gmail];
+          return [account, gmail, ...sharedAccounts];
         case "calendar_events":
           await wait(250);
           return calendarEvents(a.start, a.end);
@@ -222,6 +223,21 @@ export function installPreview() {
           return { running: true, models: [{ name: "gemma4:26b", size: 18e9 }, { name: "qwen3:8b", size: 5.2e9 }] };
         case "ai_models":
           return ["gemma4:26b", "qwen3:8b"];
+        case "shared_mailboxes":
+          await wait(600);
+          return [
+            { email: "info@keynet.it", name: "Info Keynet", unread: 12 },
+            { email: "amministrazione@keynet.it", name: "Amministrazione", unread: 3 },
+            { email: "supporto@keynet.it", name: "Supporto clienti", unread: 0 },
+          ];
+        case "shared_add": {
+          const acc = { ...account, id: "sh-" + a.email, email: a.email, name: a.name || a.email, username: a.email, sharedOf: a.accountId };
+          sharedAccounts.push(acc);
+          return acc;
+        }
+        case "account_remove":
+          sharedAccounts = sharedAccounts.filter((x) => x.id !== a.id);
+          return null;
         case "oauth_available":
           return ["microsoft", "google"];
         default:
