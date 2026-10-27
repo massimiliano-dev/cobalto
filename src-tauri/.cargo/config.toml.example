@@ -1,0 +1,6 @@
+# Copia in config.toml (ignorato da git) e inserisci gli ID delle tue applicazioni OAuth (vedi README → OAuth).
+# Letti a compile time. Vuoti = pulsante "Accedi con…" disattivato.
+[env]
+COBALTO_MS_CLIENT_ID = ""
+COBALTO_GOOGLE_CLIENT_ID = ""
+COBALTO_GOOGLE_CLIENT_SECRET = ""
