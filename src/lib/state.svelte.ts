@@ -104,6 +104,42 @@ class MailState {
   private toastId = 0;
   private pending = new Map<number, ReturnType<typeof setTimeout>>();
 
+  /**
+   * Modifiche fatte da qui negli ultimi minuti (letto/non letto, spostato, eliminato).
+   * Exchange (Microsoft 365) mostra un cambio fatto su una connessione IMAP alle altre solo
+   * dopo un po': conteggi e liste che arrivano dalla connessione di sincronizzazione possono
+   * essere di prima e non devono rimettere il badge o il grassetto a com'erano.
+   */
+  private recent = new Map<string, { at: number; seen?: boolean; removed?: boolean }>();
+  private touchedFolders = new Map<string, number>();
+  private static readonly FRESH_MS = 120_000;
+
+  private touch(accountId: string, folder: string, uid: number, change: { seen?: boolean; removed?: boolean }) {
+    const now = Date.now();
+    for (const [k, v] of this.recent) if (now - v.at > MailState.FRESH_MS) this.recent.delete(k);
+    const key = `${accountId}|${folder}|${uid}`;
+    this.recent.set(key, { ...this.recent.get(key), ...change, at: now });
+    this.touchedFolders.set(`${accountId}|${folder}`, now);
+  }
+
+  private recentlyTouched(accountId: string, folder: string): boolean {
+    const at = this.touchedFolders.get(`${accountId}|${folder}`);
+    return at !== undefined && Date.now() - at < MailState.FRESH_MS;
+  }
+
+  /** Riapplica le modifiche recenti a una lista arrivata dal server. */
+  private overlay(accountId: string, folder: string, list: Envelope[]): Envelope[] {
+    if (!this.recentlyTouched(accountId, folder)) return list;
+    const now = Date.now();
+    return list.filter((m) => {
+      const r = this.recent.get(`${accountId}|${folder}|${m.uid}`);
+      if (!r || now - r.at > MailState.FRESH_MS) return true;
+      if (r.removed) return false;
+      if (r.seen !== undefined) m.seen = r.seen;
+      return true;
+    });
+  }
+
   // ---------- Avvio ----------
 
   async init() {
@@ -164,9 +200,15 @@ class MailState {
         const known = this.lastUid[acc.id];
         const res = await api.inboxCheck(acc.id, known ?? null);
         this.lastUid[acc.id] = res.lastUid;
-        this.unseenByAccount[acc.id] = res.unseen;
         const inbox = this.folders[acc.id]?.find((f) => f.role === "inbox");
-        if (inbox) inbox.unseen = res.unseen;
+        const inboxPath = inbox?.path ?? "INBOX";
+        if (this.recentlyTouched(acc.id, inboxPath)) {
+          // conteggio forse di prima delle tue letture: si chiede alla connessione che le ha salvate
+          this.syncUnseen(acc.id, inboxPath);
+        } else {
+          this.unseenByAccount[acc.id] = res.unseen;
+          if (inbox) inbox.unseen = res.unseen;
+        }
         if (known !== undefined && res.new.length) {
           await this.notify(acc, res.new);
           if (acc.id === this.accountId && this.currentFolder?.role === "inbox") this.backgroundSync();
@@ -200,8 +242,17 @@ class MailState {
 
   async loadFolders(accountId: string) {
     try {
-      this.folders[accountId] = await api.folders(accountId);
-      // I conteggi appena arrivati possono essere di prima delle letture fatte nel frattempo
+      const before = this.folders[accountId] ?? [];
+      const next = await api.folders(accountId);
+      // I conteggi appena arrivati possono essere di prima delle letture fatte nel frattempo:
+      // per le cartelle toccate da poco resta il valore locale, poi si riallinea dalla connessione giusta
+      for (const f of next) {
+        if (!this.recentlyTouched(accountId, f.path)) continue;
+        const old = before.find((x) => x.path === f.path);
+        if (old) f.unseen = old.unseen;
+        this.syncUnseen(accountId, f.path);
+      }
+      this.folders[accountId] = next;
       if (accountId === this.accountId) this.syncUnseen(accountId, this.folder);
     } catch (e) {
       this.toast(errorText(e), "error");
@@ -275,7 +326,7 @@ class MailState {
     const cached = await api.cached(accountId, folder).catch(() => null);
     if (token !== this.loadToken) return;
     if (cached) {
-      this.messages = cached.messages;
+      this.messages = this.overlay(accountId, folder, cached.messages);
       this.total = cached.total;
       this.hasMore = cached.hasMore;
     } else {
@@ -286,7 +337,7 @@ class MailState {
     try {
       const page = await api.list(accountId, folder, 0);
       if (token !== this.loadToken) return;
-      this.messages = page.messages;
+      this.messages = this.overlay(accountId, folder, page.messages);
       this.total = page.total;
       this.hasMore = page.hasMore;
     } catch (e) {
@@ -307,7 +358,7 @@ class MailState {
       const next = await api.list(this.accountId, this.folder, this.page + 1);
       if (token !== this.loadToken) return;
       const known = new Set(this.messages.map((m) => m.uid));
-      this.messages = [...this.messages, ...next.messages.filter((m) => !known.has(m.uid))];
+      this.messages = [...this.messages, ...this.overlay(this.accountId, this.folder, next.messages).filter((m) => !known.has(m.uid))];
       this.page += 1;
       this.hasMore = next.hasMore;
     } catch (e) {
@@ -330,6 +381,7 @@ class MailState {
     try {
       const page = await api.list(accountId, folder, 0);
       if (token !== this.loadToken) return;
+      page.messages = this.overlay(accountId, folder, page.messages);
       const top = new Map(page.messages.map((m) => [m.uid, m]));
       const known = new Set(this.messages.map((m) => m.uid));
       for (const m of page.messages) if (!known.has(m.uid)) this.fresh.add(m.uid);
@@ -353,7 +405,7 @@ class MailState {
     this.searching = true;
     try {
       const results = await api.search(this.accountId, this.folder, q.trim());
-      if (this.query === q) this.searchResults = results;
+      if (this.query === q && this.accountId) this.searchResults = this.overlay(this.accountId, this.folder, results);
     } catch (e) {
       this.toast(errorText(e), "error");
     } finally {
@@ -381,6 +433,7 @@ class MailState {
     if (env && wasUnseen) {
       env.seen = true;
       this.bumpUnseen(-1);
+      this.touch(accountId, folder, uid, { seen: true });
     }
     try {
       const msg = await api.message(accountId, folder, uid);
@@ -433,6 +486,7 @@ class MailState {
     if (!env || !this.accountId) return;
     env.seen = !env.seen;
     this.bumpUnseen(env.seen ? -1 : 1);
+    this.touch(this.accountId, this.folder, env.uid, { seen: env.seen });
     try {
       await api.flag(this.accountId, this.folder, [env.uid], "seen", env.seen);
       this.syncUnseen();
@@ -481,6 +535,7 @@ class MailState {
     const [env] = list.splice(index, 1);
     if (this.searchResults) this.messages = this.messages.filter((m) => m.uid !== uid);
     if (!env.seen) this.bumpUnseen(-1);
+    this.touch(accountId, folder, uid, { removed: true });
 
     if (this.selectedUid === uid) {
       const next = list[index] ?? list[index - 1];
@@ -505,6 +560,7 @@ class MailState {
       run: () => {
         clearTimeout(timer);
         this.pending.delete(uid);
+        this.touch(accountId, folder, uid, { removed: false });
         if (this.accountId !== accountId || this.folder !== folder) return;
         const target = this.searchResults ?? this.messages;
         this.fresh.add(env.uid);

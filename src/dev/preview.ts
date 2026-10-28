@@ -124,6 +124,10 @@ let messages = rows.map(([p, subject, preview, ago, seen, answered, att], i) => 
   size: 20000,
 }));
 
+// stato "letto" visto dalla connessione di sincronizzazione: quello iniziale (Exchange in ritardo)
+const syncSeen = new Map(messages.map((m) => [m.uid, m.seen]));
+const stale = (list: typeof messages) => list.map((m) => ({ ...m, seen: syncSeen.get(m.uid) ?? m.seen }));
+
 function fullMessage(uid: number) {
   const m = messages.find((x) => x.uid === uid) ?? messages[0];
   return {
@@ -196,21 +200,35 @@ export function installPreview() {
           return settings;
         case "folders_list":
           await wait(300);
-          return folders;
+          return folders.map((f) => ({ ...f }));
         case "messages_cached":
           return null;
         case "messages_list":
           await wait(500);
           return a.folder === "INBOX"
-            ? { messages, total: 1284, hasMore: false }
-            : { messages: messages.slice(4, 9), total: 5, hasMore: false };
+            ? { messages: stale(messages), total: 1284, hasMore: false }
+            : { messages: stale(messages.slice(4, 9)), total: 5, hasMore: false };
         case "messages_search":
           await wait(400);
           return messages.filter((m) => (m.subject + m.preview).toLowerCase().includes(String(a.query).toLowerCase()));
-        case "message_get":
+        case "message_get": {
           await wait(250);
+          // come il server: aprire un messaggio lo segna letto (sulla connessione "ui")
+          const m = messages.find((x) => x.uid === a.uid);
+          if (m) m.seen = true;
           return fullMessage(a.uid);
+        }
+        case "message_flag": {
+          for (const m of messages) if (a.uids.includes(m.uid) && a.flag === "seen") m.seen = a.value;
+          return null;
+        }
+        case "folder_unseen":
+          // conteggio della connessione "ui", quella che ha appena salvato le letture
+          await wait(150);
+          return a.folder === "INBOX" ? messages.filter((m) => !m.seen).length : (folders.find((f) => f.path === a.folder)?.unseen ?? 0);
         case "inbox_check":
+          // la connessione di sincronizzazione su Exchange vede le letture solo dopo un po':
+          // qui resta sempre al conteggio iniziale, il caso peggiore
           return { unseen: 4, lastUid: 500, new: [] };
         case "message_move":
         case "message_delete_forever":
@@ -226,9 +244,9 @@ export function installPreview() {
         case "shared_mailboxes":
           await wait(600);
           return [
-            { email: "info@keynet.it", name: "Info Keynet", unread: 12 },
-            { email: "amministrazione@keynet.it", name: "Amministrazione", unread: 3 },
-            { email: "supporto@keynet.it", name: "Supporto clienti", unread: 0 },
+            { email: "info@acme.example", name: "Info Acme", unread: 12 },
+            { email: "amministrazione@acme.example", name: "Amministrazione", unread: 3 },
+            { email: "supporto@acme.example", name: "Supporto clienti", unread: 0 },
           ];
         case "shared_add": {
           const acc = { ...account, id: "sh-" + a.email, email: a.email, name: a.name || a.email, username: a.email, sharedOf: a.accountId };
