@@ -177,6 +177,7 @@ export const api = {
     invoke<{ email: string; name: string; unread: number }[]>("shared_mailboxes", { accountId }),
   sharedAdd: (accountId: string, email: string, name: string) => invoke<Account>("shared_add", { accountId, email, name }),
   calendar: (start: number, end: number) => invoke<CalendarResult>("calendar_events", { start, end }),
+  folderUnseen: (accountId: string, folder: string) => invoke<number>("folder_unseen", { accountId, folder }),
   inboxCheck: (accountId: string, afterUid: number | null) =>
     invoke<InboxCheck>("inbox_check", { accountId, afterUid }),
 

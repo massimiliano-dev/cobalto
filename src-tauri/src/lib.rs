@@ -258,6 +258,14 @@ async fn message_get(app: State<'_, App>, account_id: String, folder: String, ui
     Ok(msg)
 }
 
+/// Non letti di una cartella, contati sulla stessa connessione che ha appena
+/// salvato letture e spostamenti: il numero riflette sempre l'ultima modifica.
+#[tauri::command]
+async fn folder_unseen(app: State<'_, App>, account_id: String, folder: String) -> Result<u32> {
+    let acc = app.store.account(&account_id)?;
+    with_imap!(app, acc, "ui", |s| imap::unseen_count(s, &folder).await)
+}
+
 #[tauri::command]
 async fn message_flag(app: State<'_, App>, account_id: String, folder: String, uids: Vec<u32>, flag: String, value: bool) -> Result<()> {
     let acc = app.store.account(&account_id)?;
@@ -557,6 +565,7 @@ pub fn run() {
             messages_search,
             message_get,
             message_flag,
+            folder_unseen,
             message_move,
             message_delete_forever,
             attachment_save,

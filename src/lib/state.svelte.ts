@@ -201,9 +201,37 @@ class MailState {
   async loadFolders(accountId: string) {
     try {
       this.folders[accountId] = await api.folders(accountId);
+      // I conteggi appena arrivati possono essere di prima delle letture fatte nel frattempo
+      if (accountId === this.accountId) this.syncUnseen(accountId, this.folder);
     } catch (e) {
       this.toast(errorText(e), "error");
     }
+  }
+
+  private unseenTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /**
+   * Riallinea i non letti di una cartella con il server, dopo che letture e spostamenti
+   * sono stati salvati. Più modifiche ravvicinate fanno una sola richiesta.
+   */
+  private syncUnseen(accountId: string | null = this.accountId, folder = this.folder) {
+    if (!accountId) return;
+    const key = `${accountId}:${folder}`;
+    clearTimeout(this.unseenTimers.get(key));
+    this.unseenTimers.set(
+      key,
+      setTimeout(async () => {
+        this.unseenTimers.delete(key);
+        try {
+          const n = await api.folderUnseen(accountId, folder);
+          const f = this.folders[accountId]?.find((x) => x.path === folder);
+          if (f) f.unseen = n;
+          if (f?.role === "inbox" || folder.toUpperCase() === "INBOX") this.unseenByAccount[accountId] = n;
+        } catch {
+          // Ci pensa il prossimo controllo periodico
+        }
+      }, 600),
+    );
   }
 
   folderByRole(role: FolderRole): Folder | undefined {
@@ -342,17 +370,21 @@ class MailState {
 
   async open(uid: number) {
     if (!this.accountId) return;
+    const accountId = this.accountId;
+    const folder = this.folder;
     this.selectedUid = uid;
     const token = ++this.messageToken;
     this.messageLoading = true;
     this.messageError = null;
     const env = this.visible.find((m) => m.uid === uid);
-    if (env && !env.seen) {
+    const wasUnseen = !!env && !env.seen;
+    if (env && wasUnseen) {
       env.seen = true;
       this.bumpUnseen(-1);
     }
     try {
-      const msg = await api.message(this.accountId, this.folder, uid);
+      const msg = await api.message(accountId, folder, uid);
+      if (wasUnseen) this.syncUnseen(accountId, folder);
       if (token === this.messageToken) this.message = msg;
     } catch (e) {
       if (token === this.messageToken) {
@@ -375,6 +407,10 @@ class MailState {
   private bumpUnseen(delta: number) {
     const f = this.currentFolder;
     if (f) f.unseen = Math.max(0, f.unseen + delta);
+    // Cartelle non ancora caricate (primo avvio): il badge scende comunque subito
+    else if (this.accountId && this.folder.toUpperCase() === "INBOX") {
+      this.unseenByAccount[this.accountId] = Math.max(0, (this.unseenByAccount[this.accountId] ?? 0) + delta);
+    }
   }
 
   // ---------- Azioni ----------
@@ -399,6 +435,7 @@ class MailState {
     this.bumpUnseen(env.seen ? -1 : 1);
     try {
       await api.flag(this.accountId, this.folder, [env.uid], "seen", env.seen);
+      this.syncUnseen();
     } catch (e) {
       env.seen = !env.seen;
       this.toast(errorText(e), "error");
@@ -455,6 +492,7 @@ class MailState {
       this.pending.delete(uid);
       try {
         await op(accountId, folder, [uid]);
+        if (!env.seen) this.syncUnseen(accountId, folder);
       } catch (e) {
         this.toast(errorText(e), "error");
         if (this.accountId === accountId && this.folder === folder) this.loadFolder();

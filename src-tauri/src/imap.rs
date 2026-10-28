@@ -606,7 +606,7 @@ pub struct InboxCheck {
 
 /// Non letti contati con una ricerca: STATUS sulla cartella già selezionata può
 /// restituire un valore vecchio (Exchange lo fa), SEARCH UNSEEN no.
-async fn unseen_count(s: &mut ImapSession, folder: &str) -> Result<u32> {
+pub async fn unseen_count(s: &mut ImapSession, folder: &str) -> Result<u32> {
     s.examine(folder).await?;
     Ok(s.uid_search("UNSEEN").await?.len() as u32)
 }
