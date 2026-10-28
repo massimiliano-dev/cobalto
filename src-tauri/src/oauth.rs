@@ -50,7 +50,7 @@ const GOOGLE: Provider = Provider {
     id: "google",
     auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
     token_url: "https://oauth2.googleapis.com/token",
-    scope: "https://mail.google.com/ https://www.googleapis.com/auth/calendar.readonly openid email profile",
+    scope: "https://mail.google.com/ https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly openid email profile",
     client_id: GOOGLE_CLIENT_ID,
     client_secret: GOOGLE_CLIENT_SECRET,
     imap_host: "imap.gmail.com",
@@ -397,6 +397,11 @@ pub async fn graph_send_token(acc: &Account) -> Result<String> {
     }
 }
 
+/// Token per i suggerimenti dei destinatari (rubrica, colleghi, contatti frequenti).
+pub async fn people_token(acc: &Account) -> Result<String> {
+    graph_token(acc, "https://graph.microsoft.com/People.Read offline_access", "people").await
+}
+
 /// Token per cercare le caselle condivise a cui l'utente ha accesso.
 pub async fn directory_token(acc: &Account) -> Result<String> {
     graph_token(acc, DIRECTORY_SCOPE, "dir").await
@@ -446,7 +451,7 @@ async fn graph_token(acc: &Account, scope: &str, tag: &str) -> Result<String> {
 
 pub fn forget(account_id: &str) {
     let _ = store::delete_secret(&secret_key(account_id));
-    for tag in ["v3", "shared", "dir"] {
+    for tag in ["v3", "shared", "dir", "people"] {
         let _ = store::delete_secret(&graph_key(tag, account_id));
     }
     for old in ["oauth-graph", "oauth-graph-v2"] {

@@ -5,12 +5,15 @@
   import { generate, prompts, rewriteModes, type AiJob } from "./ai";
   import { fileSize } from "./format";
   import { signatureHtml } from "./signature";
+  import RecipientInput from "./RecipientInput.svelte";
   import { sheet } from "./motion";
 
   const c = mail.compose!;
   // Gli account Microsoft condividono i file grandi via OneDrive, gli altri hanno il limite classico
-  const viaOneDrive = mail.account?.auth === "oauth-microsoft";
-  const MAX_ATTACH = (viaOneDrive ? 100 : 25) * 1024 * 1024;
+  // L'account da cui si invia decide firma, suggerimenti e limiti degli allegati
+  let sender = $derived(mail.accounts.find((a) => a.id === c.accountId) ?? mail.account);
+  let viaOneDrive = $derived(sender?.auth === "oauth-microsoft");
+  let MAX_ATTACH = $derived((viaOneDrive ? 100 : 25) * 1024 * 1024);
   const ONEDRIVE_FROM = 2.8 * 1024 * 1024;
 
   let showCc = $state(!!c.cc || !!c.bcc);
@@ -22,7 +25,7 @@
   let undoBody = $state<string | null>(null);
   let job: AiJob | null = null;
   let bodyEl: HTMLTextAreaElement | undefined = $state();
-  let toEl: HTMLInputElement | undefined = $state();
+  let toEl: RecipientInput | undefined = $state();
   let fileInput: HTMLInputElement | undefined = $state();
 
   let title = $derived(
@@ -32,7 +35,7 @@
   let provider = $derived(mail.aiLabel);
 
   function me() {
-    return mail.account?.name || mail.account?.email || "";
+    return sender?.name || sender?.email || "";
   }
   function system() {
     return prompts.system(mail.settings?.settings.aiLanguage || "italiano", me());
@@ -56,7 +59,7 @@
       // C'è già del testo: l'istruzione diventa una riscrittura libera
       runAi(prompts.rewrite(c.body, intent), (t) => (c.body = t));
     } else if (c.source && c.mode !== "forward") {
-      runAi(prompts.reply(c.source, intent, me(), mail.account?.signature ?? ""), (t) => (c.body = t));
+      runAi(prompts.reply(c.source, intent, me(), sender?.signature ?? ""), (t) => (c.body = t));
     } else {
       if (!intent) return;
       runAi(prompts.compose(intent, c.to, c.subject, me()), (t) => {
@@ -112,7 +115,7 @@
   onMount(() => {
     tick().then(() => {
       if (c.aiIntent !== null && c.source) {
-        runAi(prompts.reply(c.source, c.aiIntent, me(), mail.account?.signature ?? ""), (t) => (c.body = t));
+        runAi(prompts.reply(c.source, c.aiIntent, me(), sender?.signature ?? ""), (t) => (c.body = t));
         c.aiIntent = null;
       } else if (!c.to) toEl?.focus();
       else bodyEl?.focus();
@@ -131,14 +134,26 @@
   </header>
 
   <div class="fields">
-    <label class="row">
+    {#if mail.accounts.length > 1}
+      <label class="row">
+        <span>Da</span>
+        <select class="from" bind:value={c.accountId}>
+          {#each mail.accounts as a (a.id)}
+            <option value={a.id}>{a.name} &lt;{a.email}&gt;{a.sharedOf ? " · condivisa" : ""}</option>
+          {/each}
+        </select>
+      </label>
+    {/if}
+    <div class="row">
       <span>A</span>
-      <input bind:this={toEl} bind:value={c.to} placeholder="nome@esempio.it" autocomplete="off" spellcheck="false" />
+      {#key c.accountId}
+        <RecipientInput bind:this={toEl} bind:value={c.to} accountId={c.accountId} label="Destinatari" placeholder="Nome o indirizzo" />
+      {/key}
       {#if !showCc}<button class="cc-toggle" onclick={() => (showCc = true)}>Cc Ccn</button>{/if}
-    </label>
+    </div>
     {#if showCc}
-      <label class="row"><span>Cc</span><input bind:value={c.cc} autocomplete="off" spellcheck="false" /></label>
-      <label class="row"><span>Ccn</span><input bind:value={c.bcc} autocomplete="off" spellcheck="false" /></label>
+      <div class="row"><span>Cc</span><RecipientInput bind:value={c.cc} accountId={c.accountId} label="Copia conoscenza" /></div>
+      <div class="row"><span>Ccn</span><RecipientInput bind:value={c.bcc} accountId={c.accountId} label="Copia nascosta" /></div>
     {/if}
     <label class="row"><span>Oggetto</span><input class="subj" bind:value={c.subject} /></label>
   </div>
@@ -152,8 +167,8 @@
       readonly={aiBusy}
     ></textarea>
 
-    {#if mail.account?.signature}
-      <div class="signature">{@html signatureHtml(mail.account.signature)}</div>
+    {#if sender?.signature}
+      <div class="signature">{@html signatureHtml(sender.signature)}</div>
     {/if}
 
     {#if c.quoted}
@@ -341,6 +356,21 @@
     outline: 0;
     background: none;
     font-size: var(--t-md);
+  }
+  .row {
+    min-height: 40px;
+    height: auto;
+  }
+  .from {
+    flex: 1;
+    min-width: 0;
+    height: 36px;
+    border: 0;
+    outline: 0;
+    background: none;
+    font-size: var(--t-md);
+    color: var(--ink);
+    appearance: none;
   }
   .row .subj {
     font-weight: 600;

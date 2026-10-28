@@ -15,6 +15,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { formatAddr, fullDate, textToHtml, escapeHtml, displayName } from "./format";
 import { signatureHtml, signatureText } from "./signature";
 import { providerLabel } from "./ai";
+import { learn, parseAddress } from "./contacts";
 import { cal } from "./calendar.svelte";
 
 export interface Toast {
@@ -26,6 +27,8 @@ export interface Toast {
 
 export interface ComposeState {
   key: number;
+  /** Account da cui si invia (anche una casella condivisa) */
+  accountId: string;
   mode: "new" | "reply" | "replyAll" | "forward";
   to: string;
   cc: string;
@@ -37,8 +40,8 @@ export interface ComposeState {
   references: string[];
   attachments: OutgoingAttachment[];
   source: FullMessage | null;
-  /** Inoltro: cartella e UID del messaggio originale, per riallegarne i file */
-  forwardOf: { folder: string; uid: number } | null;
+  /** Inoltro: account, cartella e UID del messaggio originale, per riallegarne i file */
+  forwardOf: { folder: string; uid: number; accountId: string } | null;
   sending: boolean;
   /** Se presente, il composer genera subito una risposta con l'AI */
   aiIntent: string | null;
@@ -285,6 +288,16 @@ class MailState {
     );
   }
 
+  /** Rubrica imparata: nelle cartelle di invio contano i destinatari, altrove i mittenti. */
+  private learnFrom(accountId: string, messages: Envelope[]) {
+    const role = this.folders[accountId]?.find((f) => f.path === this.folder)?.role ?? "";
+    const me = this.accounts.find((a) => a.id === accountId)?.email;
+    for (const m of messages) {
+      if (role === "sent") learn(accountId, m.to, 2, me, m.date * 1000);
+      else if (role !== "junk" && role !== "trash") learn(accountId, [m.from], 0.5, me, m.date * 1000);
+    }
+  }
+
   folderByRole(role: FolderRole): Folder | undefined {
     return this.currentFolders.find((f) => f.role === role);
   }
@@ -337,6 +350,7 @@ class MailState {
     try {
       const page = await api.list(accountId, folder, 0);
       if (token !== this.loadToken) return;
+      this.learnFrom(accountId, page.messages);
       this.messages = this.overlay(accountId, folder, page.messages);
       this.total = page.total;
       this.hasMore = page.hasMore;
@@ -438,6 +452,7 @@ class MailState {
     try {
       const msg = await api.message(accountId, folder, uid);
       if (wasUnseen) this.syncUnseen(accountId, folder);
+      learn(accountId, [msg.from, ...msg.cc, ...msg.replyTo], 1, this.account?.email, msg.date * 1000);
       if (token === this.messageToken) this.message = msg;
     } catch (e) {
       if (token === this.messageToken) {
@@ -627,15 +642,16 @@ class MailState {
       references: mode === "forward" ? [] : (source?.references ?? []),
       attachments: [],
       source,
-      forwardOf: mode === "forward" && source ? { folder: this.folder, uid: source.uid } : null,
+      forwardOf: mode === "forward" && source && this.accountId ? { folder: this.folder, uid: source.uid, accountId: this.accountId } : null,
       sending: false,
       aiIntent: null,
+      accountId: this.accountId ?? this.accounts[0]?.id ?? "",
     };
   }
 
   async send() {
     const c = this.compose;
-    const acc = this.account;
+    const acc = this.accounts.find((a) => a.id === c?.accountId) ?? this.account;
     if (!c || !acc) return;
     const split = (s: string) =>
       s
@@ -680,8 +696,10 @@ class MailState {
           attachments: c.attachments,
           forwardOf: c.forwardOf,
         },
-        this.folderByRole("sent")?.path ?? null,
+        this.folders[acc.id]?.find((f) => f.role === "sent")?.path ?? null,
       );
+      // Chi riceve le tue email è il contatto più prezioso da suggerire
+      learn(acc.id, [...to, ...split(c.cc), ...split(c.bcc)].map(parseAddress), 3, acc.email);
       if ((c.mode === "reply" || c.mode === "replyAll") && c.source) {
         const env = this.messages.find((m) => m.uid === c.source!.uid);
         if (env) env.answered = true;

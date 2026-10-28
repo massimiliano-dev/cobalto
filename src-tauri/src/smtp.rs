@@ -24,6 +24,9 @@ pub struct OutgoingAttachment {
 pub struct ForwardOf {
     pub folder: String,
     pub uid: u32,
+    /// Account del messaggio originale, se diverso da quello da cui si invia
+    #[serde(default)]
+    pub account_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

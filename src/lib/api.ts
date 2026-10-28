@@ -129,7 +129,7 @@ export interface Draft {
   inReplyTo?: string | null;
   references?: string[];
   attachments: OutgoingAttachment[];
-  forwardOf?: { folder: string; uid: number } | null;
+  forwardOf?: { folder: string; uid: number; accountId?: string } | null;
 }
 
 export interface InboxCheck {
@@ -177,6 +177,8 @@ export const api = {
     invoke<{ email: string; name: string; unread: number }[]>("shared_mailboxes", { accountId }),
   sharedAdd: (accountId: string, email: string, name: string) => invoke<Account>("shared_add", { accountId, email, name }),
   calendar: (start: number, end: number) => invoke<CalendarResult>("calendar_events", { start, end }),
+  contactsSearch: (accountId: string, query: string) =>
+    invoke<{ name: string; email: string; source: string }[]>("contacts_search", { accountId, query }),
   folderUnseen: (accountId: string, folder: string) => invoke<number>("folder_unseen", { accountId, folder }),
   inboxCheck: (accountId: string, afterUid: number | null) =>
     invoke<InboxCheck>("inbox_check", { accountId, afterUid }),

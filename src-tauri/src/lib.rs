@@ -1,5 +1,6 @@
 mod ai;
 mod calendar;
+mod contacts;
 mod error;
 mod imap;
 mod oauth;
@@ -332,7 +333,11 @@ async fn mail_send(app: State<'_, App>, account_id: String, mut draft: smtp::Dra
     let acc = app.store.account(&account_id)?;
     // Inoltro: gli allegati originali si prendono dal server, non passano dalla webview
     if let Some(fwd) = draft.forward_of.take() {
-        let originals = with_imap!(app, acc, "ui", |s| imap::all_attachments(s, &fwd.folder, fwd.uid).await)?;
+        let src = match fwd.account_id.as_deref() {
+            Some(id) if id != acc.id => app.store.account(id)?,
+            _ => acc.clone(),
+        };
+        let originals = with_imap!(app, src, "ui", |s| imap::all_attachments(s, &fwd.folder, fwd.uid).await)?;
         draft.attachments.extend(originals);
     }
     // Account Microsoft: invio via Graph, che funziona anche con l'SMTP autenticato spento.
@@ -414,6 +419,13 @@ async fn share_large_attachments(acc: &Account, token: &str, draft: &mut smtp::D
         };
     }
     Ok(())
+}
+
+/// Destinatari suggeriti dalla rubrica dell'account da cui si invia.
+#[tauri::command]
+async fn contacts_search(app: State<'_, App>, account_id: String, query: String) -> Result<Vec<contacts::Contact>> {
+    let acc = app.store.account(&account_id)?;
+    contacts::search(&acc, &query).await
 }
 
 // ---------- Calendario ----------
@@ -559,6 +571,7 @@ pub fn run() {
             shared_add,
             inbox_check,
             calendar_events,
+            contacts_search,
             folders_list,
             messages_cached,
             messages_list,

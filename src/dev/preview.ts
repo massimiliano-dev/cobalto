@@ -256,6 +256,16 @@ export function installPreview() {
         case "account_remove":
           sharedAccounts = sharedAccounts.filter((x) => x.id !== a.id);
           return null;
+        case "contacts_search": {
+          await wait(200);
+          const dir = [
+            { name: "Giulia Bianchi", email: "g.bianchi@rossisrl.it", source: "rubrica" },
+            { name: "Giorgio Martini", email: "g.martini@keynet.it", source: "directory" },
+            { name: "Elena Conti", email: "elena.conti@keynet.it", source: "rubrica" },
+          ];
+          const q = String(a.query).toLowerCase();
+          return dir.filter((c) => (c.name + c.email).toLowerCase().includes(q));
+        }
         case "oauth_available":
           return ["microsoft", "google"];
         default:
