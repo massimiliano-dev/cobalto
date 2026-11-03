@@ -6,6 +6,7 @@
   import { fileSize } from "./format";
   import { signatureHtml } from "./signature";
   import RecipientInput from "./RecipientInput.svelte";
+  import BodyEditor from "./BodyEditor.svelte";
   import { sheet } from "./motion";
 
   const c = mail.compose!;
@@ -23,8 +24,11 @@
   let aiBusy = $state(false);
   let aiError = $state<string | null>(null);
   let undoBody = $state<string | null>(null);
+  let dragging = $state(0);
   let job: AiJob | null = null;
-  let bodyEl: HTMLTextAreaElement | undefined = $state();
+  let editor: BodyEditor | undefined = $state();
+  // L'AI scrive testo semplice: la formattazione riparte da zero
+  const setBody = (t: string) => editor?.setText(t);
   let toEl: RecipientInput | undefined = $state();
   let fileInput: HTMLInputElement | undefined = $state();
 
@@ -45,7 +49,7 @@
     job?.cancel();
     aiBusy = true;
     aiError = null;
-    undoBody = c.body;
+    undoBody = c.bodyHtml;
     job = await generate(system(), prompt, apply, (err) => {
       aiBusy = false;
       aiError = err;
@@ -57,9 +61,9 @@
     const intent = instruction.trim();
     if (c.body.trim() && intent) {
       // C'è già del testo: l'istruzione diventa una riscrittura libera
-      runAi(prompts.rewrite(c.body, intent), (t) => (c.body = t));
+      runAi(prompts.rewrite(c.body, intent), setBody);
     } else if (c.source && c.mode !== "forward") {
-      runAi(prompts.reply(c.source, intent, me(), sender?.signature ?? ""), (t) => (c.body = t));
+      runAi(prompts.reply(c.source, intent, me(), sender?.signature ?? ""), setBody);
     } else {
       if (!intent) return;
       runAi(prompts.compose(intent, c.to, c.subject, me()), (t) => {
@@ -67,9 +71,9 @@
         if (match && (!c.subject || c.subject === undoSubject)) {
           c.subject = match[1].trim();
           undoSubject = c.subject;
-          c.body = t.slice(match[0].length).replace(/^\s*\n/, "");
+          setBody(t.slice(match[0].length).replace(/^\s*\n/, ""));
         } else if (!match) {
-          c.body = t;
+          setBody(t);
         }
       });
     }
@@ -79,7 +83,7 @@
 
   function rewrite(how: string) {
     if (!c.body.trim()) return;
-    runAi(prompts.rewrite(c.body, how), (t) => (c.body = t));
+    runAi(prompts.rewrite(c.body, how), setBody);
   }
 
   async function addFiles(list: FileList | null) {
@@ -104,27 +108,45 @@
     mail.compose = null;
   }
 
-  // Textarea che cresce con il contenuto
-  $effect(() => {
-    void c.body;
-    if (!bodyEl) return;
-    bodyEl.style.height = "auto";
-    bodyEl.style.height = Math.max(180, bodyEl.scrollHeight) + "px";
-  });
+  // Trascinamento dal Finder: si reagisce solo ai file, non al testo trascinato nell'editor
+  const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files");
+  function onDrop(e: DragEvent) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragging = 0;
+    addFiles(e.dataTransfer!.files);
+  }
 
   onMount(() => {
     tick().then(() => {
       if (c.aiIntent !== null && c.source) {
-        runAi(prompts.reply(c.source, c.aiIntent, me(), sender?.signature ?? ""), (t) => (c.body = t));
+        runAi(prompts.reply(c.source, c.aiIntent, me(), sender?.signature ?? ""), setBody);
         c.aiIntent = null;
       } else if (!c.to) toEl?.focus();
-      else bodyEl?.focus();
+      else editor?.focus();
     });
     return () => job?.cancel();
   });
 </script>
 
-<div class="composer" class:wide role="dialog" aria-label={title} out:sheet|global={{ y: 24, scale: 0.985, duration: 180 }}>
+<div
+  class="composer"
+  class:wide
+  role="dialog"
+  tabindex="-1"
+  aria-label={title}
+  out:sheet|global={{ y: 24, scale: 0.985, duration: 180 }}
+  ondragenter={(e) => hasFiles(e) && (e.preventDefault(), dragging++)}
+  ondragover={(e) => hasFiles(e) && e.preventDefault()}
+  ondragleave={(e) => hasFiles(e) && (dragging = Math.max(0, dragging - 1))}
+  ondrop={onDrop}
+>
+  {#if dragging}
+    <div class="drop" aria-hidden="true">
+      <Icon name="clip" size={22} />
+      <span>Rilascia per allegare</span>
+    </div>
+  {/if}
   <header>
     <span class="title">{title}</span>
     <button class="icon-btn" title={wide ? "Riduci" : "Espandi"} onclick={() => (wide = !wide)}>
@@ -159,13 +181,13 @@
   </div>
 
   <div class="body-wrap">
-    <textarea
-      bind:this={bodyEl}
-      bind:value={c.body}
-      class:streaming={aiBusy}
+    <BodyEditor
+      bind:this={editor}
+      bind:text={c.body}
+      bind:html={c.bodyHtml}
+      streaming={aiBusy}
       placeholder={c.source ? "Scrivi la risposta, oppure lascia fare all'AI qui sotto…" : "Scrivi il messaggio…"}
-      readonly={aiBusy}
-    ></textarea>
+    />
 
     {#if sender?.signature}
       <div class="signature">{@html signatureHtml(sender.signature)}</div>
@@ -217,11 +239,11 @@
         {#each rewriteModes as r (r.label)}
           <button class="tone" onclick={() => rewrite(r.how)}>{r.label}</button>
         {/each}
-        {#if undoBody !== null && undoBody !== c.body}
+        {#if undoBody !== null && undoBody !== c.bodyHtml}
           <button
             class="tone undo"
             onclick={() => {
-              c.body = undoBody ?? "";
+              editor?.setHtml(undoBody ?? "");
               undoBody = null;
             }}>Ripristina</button
           >
@@ -309,6 +331,22 @@
     }
   }
 
+  .drop {
+    position: absolute;
+    inset: 6px;
+    z-index: 50;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 8px;
+    border-radius: var(--r-lg);
+    border: 2px dashed oklch(0.5 0.215 263 / 0.5);
+    background: oklch(0.965 0.022 258 / 0.92);
+    color: var(--cobalt);
+    font-weight: 650;
+    pointer-events: none;
+    animation: settle var(--dur-fast) var(--ease-ink);
+  }
   header {
     display: flex;
     align-items: center;
@@ -390,26 +428,9 @@
     overflow-y: auto;
     padding: 12px 18px 4px;
   }
-  textarea {
-    display: block;
-    width: 100%;
-    min-height: 180px;
-    border: 0;
-    outline: 0;
-    resize: none;
-    background: none;
-    font-size: 0.95rem;
-    line-height: 1.6;
-    color: var(--ink);
-    overflow: hidden;
-  }
-  textarea.streaming {
-    caret-color: transparent;
-    color: var(--cobalt-deep);
-  }
-  textarea::placeholder {
-    color: var(--ink-3);
-  }
+
+
+
   .signature {
     margin-top: 8px;
     padding-top: 8px;

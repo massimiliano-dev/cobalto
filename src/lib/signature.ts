@@ -2,8 +2,8 @@ import DOMPurify from "dompurify";
 import { textToHtml } from "./format";
 
 const ALLOWED = {
-  ALLOWED_TAGS: ["a", "img", "b", "strong", "i", "em", "u", "br", "p", "div", "span", "small", "font", "table", "tbody", "tr", "td", "hr"],
-  ALLOWED_ATTR: ["href", "src", "alt", "title", "width", "height", "style", "target", "color", "align", "valign", "cellpadding", "cellspacing", "border"],
+  ALLOWED_TAGS: ["a", "img", "b", "strong", "i", "em", "u", "br", "p", "div", "span", "small", "font", "table", "tbody", "tr", "td", "hr", "ul", "ol", "li", "blockquote"],
+  ALLOWED_ATTR: ["href", "src", "alt", "title", "width", "height", "style", "target", "color", "align", "valign", "cellpadding", "cellspacing", "border", "face", "size"],
   ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|data:image\/(?:png|jpe?g|gif|webp);base64,)/i,
 };
 

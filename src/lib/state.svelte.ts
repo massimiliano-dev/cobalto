@@ -14,7 +14,7 @@ import { notify } from "./sounds";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { formatAddr, fullDate, textToHtml, escapeHtml, displayName } from "./format";
-import { signatureHtml, signatureText } from "./signature";
+import { sanitizeSignature, signatureHtml, signatureText } from "./signature";
 import { providerLabel } from "./ai";
 import { learn, parseAddress } from "./contacts";
 import { cal } from "./calendar.svelte";
@@ -35,7 +35,10 @@ export interface ComposeState {
   cc: string;
   bcc: string;
   subject: string;
+  /** Testo semplice (per l'AI e la parte text/plain) */
   body: string;
+  /** Testo formattato dall'editor: colori, evidenziatore, caratteri */
+  bodyHtml: string;
   quoted: { header: string; html: string; text: string } | null;
   inReplyTo: string | null;
   references: string[];
@@ -651,6 +654,7 @@ class MailState {
       forwardOf: mode === "forward" && source && this.accountId ? { folder: this.folder, uid: source.uid, accountId: this.accountId } : null,
       sending: false,
       aiIntent: null,
+      bodyHtml: "",
       accountId: this.accountId ?? this.accounts[0]?.id ?? "",
     };
   }
@@ -677,7 +681,8 @@ class MailState {
       (c.quoted ? `\n\n${c.quoted.header}\n${c.quoted.text.split("\n").map((l) => "> " + l).join("\n")}` : "");
     const html =
       `<div style="font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;color:#14213d">` +
-      textToHtml(c.body.trimEnd()) +
+      // Stessa pulizia della firma: restano solo tag e stili sicuri per le email
+      (c.bodyHtml ? sanitizeSignature(c.bodyHtml) : textToHtml(c.body.trimEnd())) +
       "<!--cobalto-links-->" +
       (sigHtml ? `<div class="cobalto-signature" style="margin-top:16px">${sigHtml}</div>` : "") +
       (c.quoted
