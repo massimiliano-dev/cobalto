@@ -3,6 +3,8 @@
   import Icon from "./Icon.svelte";
   import MailFrame from "./MailFrame.svelte";
   import AiMargin from "./AiMargin.svelte";
+  import ThreadStack from "./ThreadStack.svelte";
+  import { isReplySubject } from "./quotes";
   import { folderLabel } from "./folders";
   import { displayName, fileSize, fullDate, initials, senderHue } from "./format";
   import { openUrl } from "@tauri-apps/plugin-opener";
@@ -23,6 +25,9 @@
   let blocked = $state(0);
   let showMove = $state(false);
   let showDetails = $state(false);
+  // Nelle risposte lo storico citato si nasconde; un clic lo riporta
+  let showQuoted = $state(false);
+  let quoteTrimmed = $state(false);
 
   let allowRemote = $derived(allowOnce || (m ? trusted().includes(m.from.email.toLowerCase()) : false));
   let files = $derived(m?.attachments.filter((a) => !a.inline) ?? []);
@@ -34,6 +39,8 @@
     allowOnce = false;
     showMove = false;
     showDetails = false;
+    showQuoted = false;
+    quoteTrimmed = false;
   });
 
   function trustSender() {
@@ -108,6 +115,10 @@
           <div class="main">
             <h2 class="subject">{m.subject || "(senza oggetto)"}</h2>
 
+            {#if mail.threaded}
+              <ThreadStack current={m} />
+            {/if}
+
             <div class="sender">
               <span class="avatar" style:--h={senderHue(m.from.email)}>{initials(m.from)}</span>
               <div class="sender-text">
@@ -165,6 +176,8 @@
                 html={m.html}
                 text={m.text}
                 {allowRemote}
+                trimQuotes={isReplySubject(m.subject) && !showQuoted}
+                ontrimmed={(t) => t && (quoteTrimmed = true)}
                 onblocked={(n) => (blocked = n)}
                 onmailto={(addr) => {
                   mail.startCompose();
@@ -172,6 +185,13 @@
                 }}
               />
             </div>
+
+            {#if quoteTrimmed}
+              <button class="quoted-toggle" onclick={() => (showQuoted = !showQuoted)}>
+                <span class="dots" aria-hidden="true">···</span>
+                {showQuoted ? "Nascondi testo citato" : "Mostra testo citato"}
+              </button>
+            {/if}
 
             <div class="reply-bar">
               <button class="btn btn-line" onclick={() => mail.startCompose("reply", m)}><Icon name="reply" size={15} /> Rispondi</button>
@@ -543,6 +563,28 @@
     margin-top: 22px;
   }
 
+  .quoted-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    font-size: var(--t-xs);
+    font-weight: 600;
+    color: var(--ink-3);
+  }
+  .quoted-toggle:hover {
+    color: var(--cobalt);
+  }
+  .dots {
+    display: inline-grid;
+    place-items: center;
+    width: 28px;
+    height: 16px;
+    border-radius: 999px;
+    background: var(--paper-3);
+    letter-spacing: 1px;
+    line-height: 1;
+  }
   .reply-bar {
     display: flex;
     gap: 8px;

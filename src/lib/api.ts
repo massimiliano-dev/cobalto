@@ -33,6 +33,10 @@ export interface Envelope {
   answered: boolean;
   hasAttachments: boolean;
   size: number;
+  /** Per le conversazioni */
+  messageId?: string;
+  /** In-Reply-To + References */
+  parents?: string[];
 }
 
 export interface MessagePage {
@@ -179,6 +183,8 @@ export const api = {
   calendar: (start: number, end: number) => invoke<CalendarResult>("calendar_events", { start, end }),
   contactsSearch: (accountId: string, query: string) =>
     invoke<{ name: string; email: string; source: string }[]>("contacts_search", { accountId, query }),
+  threadRelated: (accountId: string, folder: string, ids: string[]) =>
+    invoke<Envelope[]>("thread_related", { accountId, folder, ids }),
   folderUnseen: (accountId: string, folder: string) => invoke<number>("folder_unseen", { accountId, folder }),
   inboxCheck: (accountId: string, afterUid: number | null) =>
     invoke<InboxCheck>("inbox_check", { accountId, afterUid }),

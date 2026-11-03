@@ -18,6 +18,7 @@ import { sanitizeSignature, signatureHtml, signatureText } from "./signature";
 import { providerLabel } from "./ai";
 import { learn, parseAddress } from "./contacts";
 import { cal } from "./calendar.svelte";
+import { buildThreads, type Thread } from "./threads";
 
 export interface Toast {
   id: number;
@@ -52,6 +53,15 @@ export interface ComposeState {
 }
 
 const LAST_KEY = "cobalto:last";
+const THREADED_KEY = "cobalto:threaded";
+
+function readThreaded(): boolean {
+  try {
+    return localStorage.getItem(THREADED_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
 
 class MailState {
   ready = $state(false);
@@ -99,7 +109,15 @@ class MailState {
   currentFolders = $derived(this.accountId ? (this.folders[this.accountId] ?? []) : []);
   currentFolder = $derived(this.currentFolders.find((f) => f.path === this.folder) ?? null);
   visible = $derived(this.searchResults ?? this.messages);
-  selectedIndex = $derived(this.visible.findIndex((m) => m.uid === this.selectedUid));
+  /** Lista per conversazioni (si può spegnere dalle impostazioni) */
+  threaded = $state(readThreaded());
+  /** Righe della lista: conversazioni, oppure un messaggio per riga */
+  rows = $derived<Thread[]>(
+    this.threaded
+      ? buildThreads(this.visible)
+      : this.visible.map((m) => ({ id: m.uid, messages: [m], latest: m, unread: m.seen ? 0 : 1, flagged: m.flagged, hasAttachments: m.hasAttachments })),
+  );
+  selectedThread = $derived(this.rows.find((t) => t.messages.some((m) => m.uid === this.selectedUid)) ?? null);
 
   /** UID appena arrivati o ripristinati: solo loro entrano in lista con l'animazione */
   fresh = new Set<number>();
@@ -453,6 +471,22 @@ class MailState {
     this.messageError = null;
     const env = this.visible.find((m) => m.uid === uid);
     const wasUnseen = !!env && !env.seen;
+    // Una conversazione aperta si considera letta tutta (come in Gmail)
+    const others = this.targetUids(uid)
+      .filter((u) => u !== uid)
+      .map((u) => this.visible.find((m) => m.uid === u))
+      .filter((m): m is Envelope => !!m && !m.seen);
+    if (others.length) {
+      for (const m of others) {
+        m.seen = true;
+        this.touch(accountId, folder, m.uid, { seen: true });
+      }
+      this.bumpUnseen(-others.length);
+      api
+        .flag(accountId, folder, others.map((m) => m.uid), "seen", true)
+        .then(() => this.syncUnseen(accountId, folder))
+        .catch(() => {});
+    }
     if (env && wasUnseen) {
       env.seen = true;
       this.bumpUnseen(-1);
@@ -474,11 +508,25 @@ class MailState {
   }
 
   move(delta: number) {
-    const list = this.visible;
-    if (!list.length) return;
-    const i = this.selectedIndex;
-    const next = i < 0 ? 0 : Math.min(list.length - 1, Math.max(0, i + delta));
-    if (list[next] && list[next].uid !== this.selectedUid) this.open(list[next].uid);
+    const rows = this.rows;
+    if (!rows.length) return;
+    const i = rows.findIndex((t) => t.messages.some((m) => m.uid === this.selectedUid));
+    const next = i < 0 ? 0 : Math.min(rows.length - 1, Math.max(0, i + delta));
+    if (next !== i) this.open(rows[next].latest.uid);
+  }
+
+  /** I messaggi su cui agisce un comando: tutta la conversazione, se la lista è per conversazioni. */
+  private targetUids(uid: number | null): number[] {
+    if (uid == null) return [];
+    const t = this.rows.find((r) => r.messages.some((m) => m.uid === uid));
+    return t ? t.messages.map((m) => m.uid) : [uid];
+  }
+
+  setThreaded(on: boolean) {
+    this.threaded = on;
+    try {
+      localStorage.setItem(THREADED_KEY, on ? "1" : "0");
+    } catch {}
   }
 
   private bumpUnseen(delta: number) {
@@ -506,16 +554,24 @@ class MailState {
   }
 
   async toggleSeen(uid = this.selectedUid) {
-    const env = this.visible.find((m) => m.uid === uid);
-    if (!env || !this.accountId) return;
-    env.seen = !env.seen;
-    this.bumpUnseen(env.seen ? -1 : 1);
-    this.touch(this.accountId, this.folder, env.uid, { seen: env.seen });
+    const envs = this.targetUids(uid)
+      .map((u) => this.visible.find((m) => m.uid === u))
+      .filter((m): m is Envelope => !!m);
+    if (!envs.length || !this.accountId) return;
+    // Se c'è qualcosa da leggere si segna tutto letto; altrimenti solo l'ultimo torna da leggere
+    const value = envs.some((e) => !e.seen);
+    const changed = value ? envs.filter((e) => !e.seen) : [envs[envs.length - 1]];
+    for (const e of changed) {
+      e.seen = value;
+      this.touch(this.accountId, this.folder, e.uid, { seen: value });
+    }
+    this.bumpUnseen(value ? -changed.length : changed.length);
     try {
-      await api.flag(this.accountId, this.folder, [env.uid], "seen", env.seen);
+      await api.flag(this.accountId, this.folder, changed.map((e) => e.uid), "seen", value);
       this.syncUnseen();
     } catch (e) {
-      env.seen = !env.seen;
+      for (const c of changed) c.seen = !value;
+      this.bumpUnseen(value ? changed.length : -changed.length);
       this.toast(errorText(e), "error");
     }
   }
@@ -524,21 +580,21 @@ class MailState {
     const dest = this.folderByRole("archive") ?? this.folderByRole("all");
     if (!dest) return this.toast("Nessuna cartella Archivio su questo account", "error");
     if (this.folder === dest.path) return;
-    this.removeWithUndo(uid, "Archiviato", (acc, folder, uids) => api.move(acc, folder, uids, dest.path));
+    this.removeWithUndo(this.targetUids(uid), "Archiviato", (acc, folder, uids) => api.move(acc, folder, uids, dest.path));
   }
 
   trash(uid = this.selectedUid) {
     const trash = this.folderByRole("trash");
     if (!trash || this.folder === trash.path) {
-      this.removeWithUndo(uid, "Eliminato definitivamente", (acc, folder, uids) => api.deleteForever(acc, folder, uids));
+      this.removeWithUndo(this.targetUids(uid), "Eliminato definitivamente", (acc, folder, uids) => api.deleteForever(acc, folder, uids));
     } else {
-      this.removeWithUndo(uid, "Spostato nel cestino", (acc, folder, uids) => api.move(acc, folder, uids, trash.path));
+      this.removeWithUndo(this.targetUids(uid), "Spostato nel cestino", (acc, folder, uids) => api.move(acc, folder, uids, trash.path));
     }
   }
 
   moveTo(path: string, uid = this.selectedUid) {
     const f = this.currentFolders.find((x) => x.path === path);
-    this.removeWithUndo(uid, `Spostato in ${f?.name ?? path}`, (acc, folder, uids) => api.move(acc, folder, uids, path));
+    this.removeWithUndo(this.targetUids(uid), `Spostato in ${f?.name ?? path}`, (acc, folder, uids) => api.move(acc, folder, uids, path));
   }
 
   /**
@@ -546,51 +602,56 @@ class MailState {
    * dopo qualche secondo così "Annulla" non richiede un secondo viaggio sul server.
    */
   private removeWithUndo(
-    uid: number | null,
+    uids: number[],
     label: string,
     op: (accountId: string, folder: string, uids: number[]) => Promise<void>,
   ) {
-    if (uid == null || !this.accountId) return;
+    if (!uids.length || !this.accountId) return;
     const accountId = this.accountId;
     const folder = this.folder;
     const list = this.searchResults ?? this.messages;
-    const index = list.findIndex((m) => m.uid === uid);
+    const index = list.findIndex((m) => uids.includes(m.uid));
     if (index < 0) return;
-    const [env] = list.splice(index, 1);
-    if (this.searchResults) this.messages = this.messages.filter((m) => m.uid !== uid);
-    if (!env.seen) this.bumpUnseen(-1);
-    this.touch(accountId, folder, uid, { removed: true });
+    const removed = list.filter((m) => uids.includes(m.uid));
+    for (const env of removed) list.splice(list.indexOf(env), 1);
+    if (this.searchResults) this.messages = this.messages.filter((m) => !uids.includes(m.uid));
+    const unseen = removed.filter((e) => !e.seen).length;
+    if (unseen) this.bumpUnseen(-unseen);
+    for (const u of uids) this.touch(accountId, folder, u, { removed: true });
 
-    if (this.selectedUid === uid) {
+    if (this.selectedUid != null && uids.includes(this.selectedUid)) {
       const next = list[index] ?? list[index - 1];
       if (next) this.open(next.uid);
       else this.clearSelection();
     }
 
     const timer = setTimeout(async () => {
-      this.pending.delete(uid);
+      for (const u of uids) this.pending.delete(u);
       try {
-        await op(accountId, folder, [uid]);
-        if (!env.seen) this.syncUnseen(accountId, folder);
+        await op(accountId, folder, uids);
+        if (unseen) this.syncUnseen(accountId, folder);
       } catch (e) {
         this.toast(errorText(e), "error");
         if (this.accountId === accountId && this.folder === folder) this.loadFolder();
       }
     }, 4500);
-    this.pending.set(uid, timer);
+    for (const u of uids) this.pending.set(u, timer);
 
-    this.toast(label, "info", {
+    const what = removed.length > 1 ? `${label} · ${removed.length} messaggi` : label;
+    this.toast(what, "info", {
       label: "Annulla",
       run: () => {
         clearTimeout(timer);
-        this.pending.delete(uid);
-        this.touch(accountId, folder, uid, { removed: false });
+        for (const u of uids) {
+          this.pending.delete(u);
+          this.touch(accountId, folder, u, { removed: false });
+        }
         if (this.accountId !== accountId || this.folder !== folder) return;
         const target = this.searchResults ?? this.messages;
-        this.fresh.add(env.uid);
-        target.splice(Math.min(index, target.length), 0, env);
-        if (!env.seen) this.bumpUnseen(1);
-        this.open(env.uid);
+        for (const env of removed) this.fresh.add(env.uid);
+        target.splice(Math.min(index, target.length), 0, ...removed);
+        if (unseen) this.bumpUnseen(unseen);
+        this.open(removed[removed.length - 1].uid);
       },
     });
   }

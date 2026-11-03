@@ -122,7 +122,24 @@ let messages = rows.map(([p, subject, preview, ago, seen, answered, att], i) => 
   answered,
   hasAttachments: att,
   size: 20000,
+  messageId: `m${500 - i}@demo`,
+  parents: [] as string[],
 }));
+
+// Una conversazione: proposta di Marco (ieri) → mia risposta (in Inviata) → sua conferma (oggi)
+messages.push({
+  ...messages[1],
+  uid: 380,
+  subject: "Riunione di giovedì",
+  preview: "Ciao Mario, ci vediamo giovedì per parlare del nuovo gestionale? Io sarei libero nel pomeriggio.",
+  date: now - 26 * 3600,
+  seen: true,
+  answered: true,
+  messageId: "riunione@demo",
+  parents: [],
+});
+messages[1].parents = ["riunione@demo", "risposta-mario@demo"];
+messages.sort((a, b) => b.date - a.date);
 
 // stato "letto" visto dalla connessione di sincronizzazione: quello iniziale (Exchange in ritardo)
 const syncSeen = new Map(messages.map((m) => [m.uid, m.seen]));
@@ -211,6 +228,11 @@ export function installPreview() {
         case "messages_search":
           await wait(400);
           return messages.filter((m) => (m.subject + m.preview).toLowerCase().includes(String(a.query).toLowerCase()));
+        case "thread_related":
+          await wait(200);
+          return a.ids.includes("risposta-mario@demo") || a.ids.includes("riunione@demo")
+            ? [{ ...messages[0], uid: 9001, subject: "Re: Riunione di giovedì", from: { name: "Mario Rossi", email: "mario.rossi@acme.example" }, preview: "Perfetto, giovedì alle 15 va benissimo. A presto!", date: now - 20 * 3600, seen: true, messageId: "risposta-mario@demo", parents: ["riunione@demo"] }]
+            : [];
         case "message_get": {
           await wait(250);
           // come il server: aprire un messaggio lo segna letto (sulla connessione "ui")

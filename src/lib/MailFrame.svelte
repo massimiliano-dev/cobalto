@@ -2,6 +2,7 @@
   import DOMPurify from "dompurify";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { escapeHtml } from "./format";
+  import { trimQuotedHtml, trimQuotedText } from "./quotes";
 
   let {
     html,
@@ -9,12 +10,17 @@
     allowRemote,
     onblocked,
     onmailto,
+    trimQuotes = false,
+    ontrimmed,
   }: {
     html: string | null;
     text: string | null;
     allowRemote: boolean;
     onblocked: (count: number) => void;
     onmailto: (address: string) => void;
+    /** Nasconde lo storico citato (solo nelle risposte) */
+    trimQuotes?: boolean;
+    ontrimmed?: (trimmed: boolean) => void;
   } = $props();
 
   let frame: HTMLIFrameElement | undefined = $state();
@@ -44,6 +50,7 @@
 
   let doc = $derived.by(() => {
     let blocked = 0;
+    let trimmed = false;
     let body: string;
     if (html) {
       DOMPurify.removeAllHooks();
@@ -89,14 +96,18 @@
           return `<style${attrs}>${cleaned}</style>`;
         });
       }
+      if (trimQuotes) ({ html: body, trimmed } = trimQuotedHtml(body));
     } else {
-      body = `<pre class="plain">${linkify(text ?? "")}</pre>`;
+      let plain = text ?? "";
+      if (trimQuotes) ({ text: plain, trimmed } = trimQuotedText(plain));
+      body = `<pre class="plain">${linkify(plain)}</pre>`;
     }
-    return { srcdoc: `<!doctype html><html><head><meta charset="utf-8"><style>${BASE_CSS}</style></head><body>${body}</body></html>`, blocked };
+    return { srcdoc: `<!doctype html><html><head><meta charset="utf-8"><style>${BASE_CSS}</style></head><body>${body}</body></html>`, blocked, trimmed };
   });
 
   $effect(() => {
     onblocked(doc.blocked);
+    ontrimmed?.(doc.trimmed);
   });
 
   function onload() {

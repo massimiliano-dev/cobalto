@@ -254,6 +254,17 @@
   </section>
 
   <section>
+    <h3>Lettura</h3>
+    <label class="toggle-row">
+      <span>
+        <strong>Raggruppa per conversazione</strong>
+        <small>Le risposte di uno stesso scambio stanno in una riga sola, anche le tue da Inviata.</small>
+      </span>
+      <input type="checkbox" checked={mail.threaded} onchange={(e) => mail.setThreaded((e.target as HTMLInputElement).checked)} />
+    </label>
+  </section>
+
+  <section>
     <h3>Notifiche</h3>
     {#each [{ kind: "mail", label: "Nuova posta" }, { kind: "meeting", label: "Riunioni in arrivo" }] as row (row.kind)}
       {@const kind = row.kind as SoundKind}
@@ -545,6 +556,30 @@
     color: var(--danger);
   }
 
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .toggle-row span {
+    flex: 1;
+    display: grid;
+    gap: 2px;
+  }
+  .toggle-row strong {
+    font-size: var(--t-md);
+    font-weight: 600;
+  }
+  .toggle-row small {
+    font-size: var(--t-xs);
+    line-height: 1.4;
+    color: var(--ink-3);
+  }
+  .toggle-row input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--cobalt);
+  }
   .sound-row {
     display: grid;
     grid-template-columns: 1fr 160px auto;

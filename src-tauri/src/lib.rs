@@ -251,6 +251,13 @@ fn patch_cache(app: &App, account_id: &str, folder: &str, uids: &[u32], f: impl 
     }
 }
 
+/// Messaggi della stessa conversazione in un'altra cartella (le proprie risposte in Inviata).
+#[tauri::command]
+async fn thread_related(app: State<'_, App>, account_id: String, folder: String, ids: Vec<String>) -> Result<Vec<imap::Envelope>> {
+    let acc = app.store.account(&account_id)?;
+    with_imap!(app, acc, "sync", |s| imap::related(s, &folder, &ids).await)
+}
+
 #[tauri::command]
 async fn message_get(app: State<'_, App>, account_id: String, folder: String, uid: u32) -> Result<imap::FullMessage> {
     let acc = app.store.account(&account_id)?;
@@ -611,6 +618,7 @@ pub fn run() {
             messages_search,
             message_get,
             message_flag,
+            thread_related,
             folder_unseen,
             message_move,
             message_delete_forever,

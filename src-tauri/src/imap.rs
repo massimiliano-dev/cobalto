@@ -44,6 +44,12 @@ pub struct Envelope {
     pub answered: bool,
     pub has_attachments: bool,
     pub size: u32,
+    /// Per le conversazioni (default: le cache scritte prima non li hanno)
+    #[serde(default)]
+    pub message_id: String,
+    /// In-Reply-To + References: i messaggi a cui questo risponde
+    #[serde(default)]
+    pub parents: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -369,6 +375,19 @@ fn clean_preview(s: &str) -> String {
     filtered.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Identificativi che legano un messaggio alla sua conversazione (In-Reply-To e References).
+fn parent_ids(msg: &mail_parser::Message) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    for v in [msg.in_reply_to(), msg.references()] {
+        match v.as_text_list() {
+            Some(list) => ids.extend(list.iter().map(|s| s.to_string())),
+            None => ids.extend(v.as_text().map(str::to_string)),
+        }
+    }
+    ids.dedup();
+    ids
+}
+
 fn envelope_from(f: &Fetch) -> Option<Envelope> {
     let uid = f.uid?;
     let mut raw = f.header().unwrap_or_default().to_vec();
@@ -404,7 +423,32 @@ fn envelope_from(f: &Fetch) -> Option<Envelope> {
         answered: flags.iter().any(|f| matches!(f, Flag::Answered)),
         has_attachments,
         size: f.size.unwrap_or(0),
+        message_id: msg.message_id().unwrap_or_default().to_string(),
+        parents: parent_ids(&msg),
     })
+}
+
+/// Messaggi di un'altra cartella (di solito Inviata) che appartengono alla stessa conversazione:
+/// hanno uno degli identificativi come Message-ID, In-Reply-To o References.
+pub async fn related(s: &mut ImapSession, folder: &str, ids: &[String]) -> Result<Vec<Envelope>> {
+    let ids: Vec<&String> = ids
+        .iter()
+        .filter(|i| !i.is_empty() && !i.contains(['"', '\\', '\r', '\n']))
+        .take(8)
+        .collect();
+    let one = |id: &str| format!("OR OR HEADER Message-ID \"{id}\" HEADER In-Reply-To \"{id}\" HEADER References \"{id}\"");
+    let Some(criteria) = ids.iter().map(|i| one(i)).reduce(|a, b| format!("OR {a} {b}")) else {
+        return Ok(vec![]);
+    };
+    s.examine(folder).await?;
+    let mut uids: Vec<u32> = s.uid_search(criteria).await?.into_iter().collect();
+    uids.sort_unstable_by(|a, b| b.cmp(a));
+    uids.truncate(30);
+    if uids.is_empty() {
+        return Ok(vec![]);
+    }
+    let fetches: Vec<Fetch> = s.uid_fetch(uid_set(&uids), LIST_ITEMS).await?.try_collect().await?;
+    Ok(fetches.iter().filter_map(envelope_from).collect())
 }
 
 pub struct Page {
@@ -706,6 +750,15 @@ mod tests {
         assert!(login_hint(&acc, raw).contains("password per le app"));
         acc.imap_host = "mail.esempio.it".into();
         assert_eq!(login_hint(&acc, r#"no response: code: None, info: Some("Login failed")"#), "Accesso rifiutato: Login failed");
+    }
+
+    #[test]
+    fn thread_ids_from_headers() {
+        let raw = b"Message-ID: <c@x>\r\nIn-Reply-To: <b@x>\r\nReferences: <a@x> <b@x>\r\nSubject: Re: Prova\r\n\r\nciao";
+        let msg = mail_parser::MessageParser::default().parse(&raw[..]).unwrap();
+        assert_eq!(msg.message_id(), Some("c@x"));
+        let ids = super::parent_ids(&msg);
+        assert!(ids.contains(&"a@x".to_string()) && ids.contains(&"b@x".to_string()));
     }
 
     #[test]

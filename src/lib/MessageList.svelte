@@ -4,6 +4,7 @@
   import { folderLabel } from "./folders";
   import { dateGroup, displayName, listDate } from "./format";
   import type { Envelope } from "./api";
+  import type { Thread } from "./threads";
   import { collapse } from "./motion";
 
   let query = $state("");
@@ -15,12 +16,12 @@
   let outgoing = $derived(["sent", "drafts"].includes(mail.currentFolder?.role ?? ""));
 
   let groups = $derived.by(() => {
-    const out: { label: string; items: Envelope[] }[] = [];
-    for (const m of mail.visible) {
-      const label = mail.searchResults ? "Risultati" : dateGroup(m.date);
+    const out: { label: string; items: Thread[] }[] = [];
+    for (const t of mail.rows) {
+      const label = mail.searchResults ? "Risultati" : dateGroup(t.latest.date);
       const last = out.at(-1);
-      if (last && last.label === label) last.items.push(m);
-      else out.push({ label, items: [m] });
+      if (last && last.label === label) last.items.push(t);
+      else out.push({ label, items: [t] });
     }
     return out;
   });
@@ -55,10 +56,21 @@
     searchTimer = setTimeout(() => mail.search(query), 380);
   }
 
-  function who(m: Envelope) {
+  function who(t: Thread) {
+    const m = t.latest;
     if (outgoing) return m.to.length ? "A: " + m.to.map(displayName).join(", ") : "(nessun destinatario)";
-    return displayName(m.from) || "(sconosciuto)";
+    if (t.messages.length === 1) return displayName(m.from) || "(sconosciuto)";
+    // Chi ha scritto nella conversazione, dal più recente; "tu" per i propri messaggi
+    const me = mail.account?.email.toLowerCase();
+    const names: string[] = [];
+    for (const x of [...t.messages].reverse()) {
+      const n = x.from.email.toLowerCase() === me ? "tu" : displayName(x.from).split(" ")[0];
+      if (n && !names.includes(n)) names.push(n);
+    }
+    return names.length > 3 ? `${names.slice(0, 3).join(", ")} e altri` : names.join(", ");
   }
+
+  const has = (t: Thread, uid: number | null) => t.messages.some((m: Envelope) => m.uid === uid);
 </script>
 
 <section class="list">
@@ -131,14 +143,15 @@
     {#key `${mail.accountId}:${mail.folder}:${mail.searchResults ? mail.query : ""}`}
     {#each groups as g, gi (g.label)}
       <div class="group" style:--i={gi * 3}>{g.label}</div>
-      {#each g.items as m, i (m.uid)}
+      {#each g.items as t, i (t.messages[0].uid)}
+        {@const m = t.latest}
         <div
           in:collapse={{ enabled: mail.fresh.has(m.uid) }}
           out:collapse
           style:--i={Math.min(gi * 3 + i, 12)}
           class="row"
-          class:unread={!m.seen}
-          class:selected={m.uid === mail.selectedUid}
+          class:unread={t.unread > 0}
+          class:selected={has(t, mail.selectedUid)}
           data-uid={m.uid}
           role="button"
           tabindex="-1"
@@ -147,8 +160,9 @@
         >
           <span class="ink" aria-hidden="true"></span>
           <div class="line1">
-            <span class="from">{who(m)}</span>
-            {#if m.hasAttachments}<span class="glyph"><Icon name="clip" size={13} /></span>{/if}
+            <span class="from">{who(t)}</span>
+            {#if t.messages.length > 1}<span class="count" title="{t.messages.length} messaggi">{t.messages.length}</span>{/if}
+            {#if t.hasAttachments}<span class="glyph"><Icon name="clip" size={13} /></span>{/if}
             {#if m.answered}<span class="glyph" title="Risposto"><Icon name="reply" size={13} /></span>{/if}
             <time>{listDate(m.date)}</time>
           </div>
@@ -158,17 +172,17 @@
           <div class="quick">
             <button title="Archivia (E)" onclick={(e) => (e.stopPropagation(), mail.archive(m.uid))}><Icon name="archive" size={15} /></button>
             <button title="Elimina (#)" onclick={(e) => (e.stopPropagation(), mail.trash(m.uid))}><Icon name="trash" size={15} /></button>
-            <button title={m.seen ? "Segna come da leggere (U)" : "Segna come letto (U)"} onclick={(e) => (e.stopPropagation(), mail.toggleSeen(m.uid))}>
-              <Icon name={m.seen ? "mail" : "mailOpen"} size={15} />
+            <button title={t.unread ? "Segna come letto (U)" : "Segna come da leggere (U)"} onclick={(e) => (e.stopPropagation(), mail.toggleSeen(m.uid))}>
+              <Icon name={t.unread ? "mailOpen" : "mail"} size={15} />
             </button>
           </div>
           <button
             class="flag"
-            class:on={m.flagged}
+            class:on={t.flagged}
             title="Contrassegna (S)"
             onclick={(e) => (e.stopPropagation(), mail.toggleFlag(m.uid))}
           >
-            {#key m.flagged}<span class="star"><Icon name="star" size={14} fill={m.flagged} /></span>{/key}
+            {#key t.flagged}<span class="star"><Icon name="star" size={14} fill={t.flagged} /></span>{/key}
           </button>
         </div>
       {/each}
@@ -369,6 +383,26 @@
   .unread .from {
     font-weight: 680;
     color: var(--ink);
+  }
+  /* Quanti messaggi nella conversazione */
+  .count {
+    flex: none;
+    align-self: center;
+    min-width: 18px;
+    height: 16px;
+    padding: 0 5px;
+    border-radius: 999px;
+    font-size: 0.66rem;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-2);
+    background: var(--paper-3);
+  }
+  .unread .count {
+    color: var(--cobalt);
+    background: var(--cobalt-wash);
   }
   .glyph {
     color: var(--ink-3);
