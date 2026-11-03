@@ -12,6 +12,7 @@ import {
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { notify } from "./sounds";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { formatAddr, fullDate, textToHtml, escapeHtml, displayName } from "./format";
 import { signatureHtml, signatureText } from "./signature";
 import { providerLabel } from "./ai";
@@ -175,6 +176,11 @@ class MailState {
     cal.start();
     // Tornando sull'app si ricontrolla subito: badge e notifiche non restano indietro
     window.addEventListener("focus", () => this.checkInboxes());
+    // Link mailto: cliccati dentro un'email (li intercetta il backend)
+    listen<string>("compose-to", (e) => {
+      this.startCompose();
+      if (this.compose) this.compose.to = decodeURIComponent(e.payload);
+    });
 
     // Badge reattivo: i non letti della Posta in arrivo dell'account che stai guardando.
     // Cambia con l'account e scende nell'istante in cui leggi, archivi o elimini

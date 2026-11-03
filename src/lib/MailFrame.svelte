@@ -36,7 +36,7 @@
 
   function linkify(s: string) {
     return escapeHtml(s)
-      .replace(/(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]])/g, '<a href="$1">$1</a>')
+      .replace(/(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>')
       .split("\n")
       .map((l) => (l.startsWith("&gt;") ? `<span class="q">${l}</span>` : l))
       .join("\n");
@@ -48,6 +48,12 @@
     if (html) {
       DOMPurify.removeAllHooks();
       DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+        // In WebKit i clic nell'iframe senza script non arrivano all'app: il link chiede
+        // una nuova finestra e il backend lo apre nel browser (o nel composer, se è mailto)
+        if (node.tagName === "A" && node.hasAttribute("href")) {
+          node.setAttribute("target", "_blank");
+          node.setAttribute("rel", "noopener noreferrer");
+        }
         if (node.tagName === "IMG") {
           const src = node.getAttribute("src") ?? "";
           if (/^https?:/i.test(src) && !allowRemote) {
@@ -115,7 +121,7 @@
 <iframe
   bind:this={frame}
   title="Contenuto del messaggio"
-  sandbox="allow-same-origin"
+  sandbox="allow-same-origin allow-popups"
   srcdoc={doc.srcdoc}
   style:height="{height}px"
   {onload}

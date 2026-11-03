@@ -544,6 +544,22 @@ fn ai_cancel(app: State<'_, App>, id: String) {
     ai::cancel(&app.jobs, &id);
 }
 
+/// Link aperti dalle email: il web nel browser, mailto nel composer di Cobalto.
+fn open_external(handle: &AppHandle, url: &tauri::Url) {
+    use tauri::Emitter;
+    use tauri_plugin_opener::OpenerExt;
+    match url.scheme() {
+        "mailto" => {
+            let to = url.path().to_string();
+            let _ = handle.emit("compose-to", to);
+        }
+        "http" | "https" => {
+            let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+        }
+        _ => {}
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -558,6 +574,23 @@ pub fn run() {
                 jobs: ai::Jobs::default(),
                 oauth_pending: Default::default(),
             });
+            // La finestra si crea qui (create: false nella config) per poter intercettare i link:
+            // l'iframe delle email non ha script, quindi un clic su un link chiede una nuova finestra
+            let config = app
+                .config()
+                .app
+                .windows
+                .iter()
+                .find(|w| w.label == "main")
+                .cloned()
+                .ok_or("finestra main mancante nella configurazione")?;
+            let handle = app.handle().clone();
+            tauri::WebviewWindowBuilder::from_config(app, &config)?
+                .on_new_window(move |url, _| {
+                    open_external(&handle, &url);
+                    tauri::webview::NewWindowResponse::Deny
+                })
+                .build()?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
